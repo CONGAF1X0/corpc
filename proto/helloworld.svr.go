@@ -2,7 +2,10 @@
 
 package proto
 
-import "corpc"
+import (
+	"corpc"
+	"fmt"
+)
 
 type GreeterClient interface {
 	SayHello(args *HelloRequest) (*HelloReply, error)
@@ -77,6 +80,8 @@ type Greeter struct{}
 
 func (s *Greeter) SayHello(args *HelloRequest, reply *HelloReply) error {
 	// define your service ...
+	reply.Message = "Hello " + args.Name
+	fmt.Println("SayHello")
 	return nil
 }
 

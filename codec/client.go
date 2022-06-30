@@ -7,7 +7,6 @@ import (
 	"corpc/serializer"
 	"hash/crc32"
 	"io"
-	"net/rpc"
 	"sync"
 )
 
@@ -24,7 +23,7 @@ type clientCodec struct {
 }
 
 func NewClientCodec(conn io.ReadWriteCloser, compressType compressor.CompressType,
-	serializer serializer.Serializer) rpc.ClientCodec {
+	serializer serializer.Serializer) Codec {
 	return &clientCodec{
 		r:            bufio.NewReader(conn),
 		w:            bufio.NewWriter(conn),
@@ -35,7 +34,7 @@ func NewClientCodec(conn io.ReadWriteCloser, compressType compressor.CompressTyp
 	}
 }
 
-func (c *clientCodec) WriteRequest(request *rpc.Request, param interface{}) error {
+func (c *clientCodec) Write(request *Header, param interface{}) error {
 	c.mu.Lock()
 	c.pending[request.Seq] = request.ServiceMethod
 	c.mu.Unlock()
@@ -71,7 +70,7 @@ func (c *clientCodec) WriteRequest(request *rpc.Request, param interface{}) erro
 	return nil
 }
 
-func (c *clientCodec) ReadResponseHeader(response *rpc.Response) error {
+func (c *clientCodec) ReadHeader(response *Header) error {
 	c.response.Reset()
 	data, err := recvFrame(c.r)
 	if err != nil {
@@ -89,7 +88,7 @@ func (c *clientCodec) ReadResponseHeader(response *rpc.Response) error {
 	return nil
 }
 
-func (c *clientCodec) ReadResponseBody(param interface{}) error {
+func (c *clientCodec) ReadBody(param interface{}) error {
 	if param == nil {
 		if c.response.ResponseLen != 0 {
 			if err := read(c.r, make([]byte, c.response.ResponseLen)); err != nil {
