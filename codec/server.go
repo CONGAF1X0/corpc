@@ -7,7 +7,6 @@ import (
 	"corpc/serializer"
 	"hash/crc32"
 	"io"
-	"net/rpc"
 	"sync"
 )
 
@@ -23,7 +22,7 @@ type serverCodec struct {
 	pending    map[uint64]uint64
 }
 
-func NewServerCodec(conn io.ReadWriteCloser, serializer serializer.Serializer) rpc.ServerCodec {
+func NewServerCodec(conn io.ReadWriteCloser, serializer serializer.Serializer) Codec {
 	return &serverCodec{
 		r:          bufio.NewReader(conn),
 		w:          bufio.NewWriter(conn),
@@ -33,7 +32,7 @@ func NewServerCodec(conn io.ReadWriteCloser, serializer serializer.Serializer) r
 	}
 }
 
-func (s *serverCodec) ReadRequestHeader(request *rpc.Request) error {
+func (s *serverCodec) ReadHeader(request *Header) error {
 	s.request.ResetHeader()
 	data, err := recvFrame(s.r)
 	if err != nil {
@@ -51,7 +50,7 @@ func (s *serverCodec) ReadRequestHeader(request *rpc.Request) error {
 	return nil
 }
 
-func (s *serverCodec) ReadRequestBody(param interface{}) error {
+func (s *serverCodec) ReadBody(param interface{}) error {
 	if param == nil {
 		if s.request.RequestLen != 0 {
 			if err := read(s.r, make([]byte, s.request.RequestLen)); err != nil {
@@ -82,7 +81,7 @@ func (s *serverCodec) ReadRequestBody(param interface{}) error {
 	return s.serializer.Unmarshal(req, param)
 }
 
-func (s *serverCodec) WriteResponse(response *rpc.Response, param interface{}) error {
+func (s *serverCodec) Write(response *Header, param interface{}) error {
 	s.mutex.Lock()
 	id, ok := s.pending[response.Seq]
 	if !ok {
