@@ -1,6 +1,7 @@
 package corpc
 
 import (
+	"context"
 	"corpc/codec"
 	"corpc/compressor"
 	"corpc/serializer"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"time"
 )
 
 type Call struct {
@@ -25,8 +27,8 @@ func (call *Call) done() {
 }
 
 type Client struct {
+	opt     options
 	cc      codec.Codec
-	opt     *Option
 	sending sync.Mutex // protect following
 	header  codec.Header
 
@@ -167,13 +169,29 @@ func (client *Client) Go(serviceMethod string, args, reply interface{}, done cha
 // Call invokes the named function, waits for it to complete,
 // and returns its error status.
 func (client *Client) Call(serviceMethod string, args, reply interface{}) error {
-	call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
-	return call.Error
+	if client.opt.timeout == 0 {
+		call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
+		return call.Error
+	}
+	ctx, _ := context.WithTimeout(context.Background(), client.opt.timeout)
+	return client.CallWithTimeout(ctx, serviceMethod, args, reply)
+}
+
+func (client *Client) CallWithTimeout(ctx context.Context, serviceMethod string, args, reply interface{}) error {
+	call := client.Go(serviceMethod, args, reply, make(chan *Call, 1))
+	select {
+	case <-ctx.Done():
+		client.removeCall(call.Seq)
+		return errors.New("rpc client: call failed: " + ctx.Err().Error())
+	case c := <-call.Done:
+		return c.Error
+	}
 }
 
 type options struct {
 	compressType compressor.CompressType
 	serializer   serializer.Serializer
+	timeout      time.Duration
 }
 
 type Option func(o *options)
@@ -190,6 +208,12 @@ func WithSerializer(s serializer.Serializer) Option {
 	}
 }
 
+func WithTimeout(t time.Duration) Option {
+	return func(o *options) {
+		o.timeout = t
+	}
+}
+
 func NewClient(conn io.ReadWriteCloser, opts ...Option) *Client {
 	options := options{
 		compressType: compressor.Raw,
@@ -202,6 +226,7 @@ func NewClient(conn io.ReadWriteCloser, opts ...Option) *Client {
 	client := &Client{
 		cc:      codec.NewClientCodec(conn, options.compressType, options.serializer),
 		pending: make(map[uint64]*Call),
+		opt:     options,
 	}
 	go client.receive()
 	return client

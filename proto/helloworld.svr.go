@@ -5,6 +5,7 @@ package proto
 import (
 	"corpc"
 	"fmt"
+	"time"
 )
 
 type GreeterClient interface {
@@ -82,6 +83,7 @@ func (s *Greeter) SayHello(args *HelloRequest, reply *HelloReply) error {
 	// define your service ...
 	reply.Message = "Hello " + args.Name
 	fmt.Println("SayHello")
+	time.Sleep(time.Second * 2)
 	return nil
 }
 

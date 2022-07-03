@@ -4,6 +4,7 @@ import (
 	"corpc/codec"
 	"corpc/serializer"
 	"errors"
+	"fmt"
 	"go/token"
 	"io"
 	"log"
@@ -12,11 +13,12 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Server struct {
+	opts       options
 	serviceMap sync.Map
-	serializer.Serializer
 }
 
 type request struct {
@@ -48,7 +50,7 @@ func NewServer(opts ...Option) *Server {
 		opt(&options)
 	}
 	s := new(Server)
-	s.Serializer = options.serializer
+	s.opts = options
 	return s
 }
 
@@ -59,7 +61,8 @@ func (s *Server) Serve(lis net.Listener) {
 			log.Println("rpc server: accept error:", err)
 			continue
 		}
-		go s.serveCodec(codec.NewServerCodec(conn, s.Serializer))
+		// conn.SetDeadline(time.Now().Add(1 * time.Second))
+		go s.serveCodec(codec.NewServerCodec(conn, s.opts.serializer))
 	}
 }
 
@@ -80,7 +83,7 @@ func (server *Server) serveCodec(cc codec.Codec) {
 			continue
 		}
 		wg.Add(1)
-		go server.handleRequest(cc, req, sending, wg)
+		go server.handleRequestWithTimeout(cc, req, sending, wg, server.opts.timeout)
 	}
 	wg.Wait()
 	_ = cc.Close()
@@ -182,6 +185,39 @@ func (s *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex
 		return
 	}
 	s.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+}
+
+func (s *Server) handleRequestWithTimeout(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
+	defer wg.Done()
+	called := make(chan struct{}, 1)
+	sent := make(chan struct{}, 1)
+
+	go func() {
+		err := req.svc.call(req.mtype, req.argv, req.replyv)
+		called <- struct{}{}
+		if err != nil {
+			req.h.Error = err.Error()
+			s.sendResponse(cc, req.h, invalidRequest, sending)
+			sent <- struct{}{}
+			return
+		}
+		s.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+		sent <- struct{}{}
+	}()
+
+	if timeout == 0 {
+		<-called
+		<-sent
+		return
+	}
+
+	select {
+	case <-time.After(timeout):
+		req.h.Error = fmt.Sprintf("rpc server: request handle timeout: expect within %s", timeout)
+		s.sendResponse(cc, req.h, invalidRequest, sending)
+	case <-called:
+		<-sent
+	}
 }
 
 func (m *methodType) NumCalls() uint64 {
